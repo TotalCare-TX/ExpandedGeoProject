@@ -6,7 +6,10 @@
 packages <- c(
     "tidyverse",
     "tidymodels",
-    "usethis"
+    "usethis",
+    "sf",
+    "tidygeocoder",
+    "osmdata"
 )
 
 # Install missing packages using renv
