@@ -193,6 +193,12 @@ while (i <= length(tile_list)) {
         i <- i - 1
     }
     
+    if(length(result) == 0) {
+        
+        tile_list[[i]]$status <- "Failure" 
+        
+    }
+    
     i <- i + 1
     
     saveRDS(tile_list, "final_tiles.rds")
