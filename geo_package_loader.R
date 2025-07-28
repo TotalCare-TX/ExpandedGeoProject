@@ -9,7 +9,10 @@ packages <- c(
     "usethis",
     "sf",
     "tidygeocoder",
-    "osmdata"
+    "osmdata",
+    "tigris",
+    "digest",
+    "R.utils"
 )
 
 # Install missing packages using renv
