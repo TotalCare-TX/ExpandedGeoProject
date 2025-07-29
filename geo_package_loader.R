@@ -12,7 +12,8 @@ packages <- c(
     "osmdata",
     "tigris",
     "digest",
-    "R.utils"
+    "R.utils",
+    "leaflet"
 )
 
 # Install missing packages using renv
