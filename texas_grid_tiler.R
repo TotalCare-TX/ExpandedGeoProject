@@ -243,3 +243,65 @@ leaflet(tile_sf) %>%
         opacity = 1             # border opacity
     )
 
+#### Buffering tile size by sigma --------------------
+
+#In this next part, we buffer the tiles by the sigma.
+
+#We need to do this because the edges will suffer from edge bias without being able to remove the buffers to extract a PURE core.
+
+#For now, since we will use a multi-scale KDE feature strategy, we will simply ensure that each tile has a buffer large enough to use the largest sigma available - 5000m.
+
+check_and_expand_buffer_epsg4326 <- function(tile_data, sigma_m = 5000, error_factor = 1.5) {
+    
+    buffered_tile <- tile_data$geometry
+    buffer_size_deg <- tile_data$buffer
+    
+    # buffered_tile: sf polygon already buffered (EPSG:4326)
+    # buffer_size_deg: current buffer size in degrees (min distance from core to edge)
+    # sigma_m: KDE bandwidth in meters
+    # factor: multiplier for sigma (default 1.5)
+    
+    # 1. Get tile latitude (center point of tile)
+    tile_center <- st_centroid(buffered_tile)
+    lat <- st_coordinates(tile_center)[2]
+    
+    # 2. Convert sigma (meters) to degrees for this latitude
+    meters_per_deg_lat <- 111320                       # ~constant
+    meters_per_deg_lon <- 111320 * cos(lat * pi / 180) # shrinks with latitude
+    
+    # We'll use the smaller of the two (conservative buffer requirement)
+    sigma_deg <- sigma_m / min(meters_per_deg_lat, meters_per_deg_lon)
+    required_buffer_deg <- error_factor * sigma_deg
+    
+    #Set revised tile for revision
+    revised_tile <- tile_data
+    
+    # 3. Compare buffer size to requirement
+    if (buffer_size_deg < required_buffer_deg) {
+        needed_extra_deg <- required_buffer_deg - buffer_size_deg
+        message(sprintf("Expanding buffer: current %.6f° < required %.6f°. Expanding by %.6f°.",
+                        buffer_size_deg, required_buffer_deg, needed_extra_deg))
+        
+        buffered_tile <- st_buffer(buffered_tile, dist = needed_extra_deg)
+        
+        revised_tile$geometry <- buffered_tile
+        revised_tile$buffer <- required_buffer_deg
+        revised_tile$status <- tile_data$status
+        
+    } else {
+        message(sprintf("Buffer sufficient: current %.6f° >= required %.6f°. No expansion needed.",
+                        buffer_size_deg, required_buffer_deg))
+    }
+    
+    
+    
+    return(revised_tile)
+}
+
+#Now we can run this function on a loop for each element in our final_tiles list.
+
+for (i in 1:length(final_tiles)) {
+    
+    final_tiles[[i]] <- check_and_expand_buffer_epsg4326(final_tiles[[i]])
+    
+}
