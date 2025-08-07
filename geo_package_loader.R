@@ -13,7 +13,10 @@ packages <- c(
     "tigris",
     "digest",
     "R.utils",
-    "leaflet"
+    "leaflet",
+    "raster",
+    "httr",
+    "jsonlite"
 )
 
 # Install missing packages using renv
