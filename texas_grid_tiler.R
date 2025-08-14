@@ -1,4 +1,4 @@
-#This script will create a grid for the state of Texas for downloading osmdata. It uses housing as its main control since this is the rate-limiting factor.
+#This script will create a grid for the state of Texas for downloading osmdata. It uses highways as its main control since this could be a rate-limiting factor. Additionally, housing appears to be much more irregular.
 
 options(tigris_use_cache = TRUE)
 
@@ -6,8 +6,8 @@ options(tigris_use_cache = TRUE)
 tile_size <- 1       # degrees
 overlap <- 0.1       # degrees
 timeout_sec <- 180    # seconds
-key <- "building"
-value <- c("residential", "house", "apartments")
+key <- "highway"
+#value <- c("residential", "house", "apartments")
 cache_dir <- "osm_cache"
 tiles_output <- "final_tiles.rds"
 min_tile_size_deg <- 0.01  # prevent infinite subdivision
@@ -50,7 +50,9 @@ download_osm_safe <- function(tile_geom, buffer_dist, key, value, cache_dir, tim
     result <- tryCatch({
         withTimeout({
             opq(bbox = bbox) %>%
-                add_osm_feature(key = key, value = value) %>%
+                add_osm_feature(key = key,
+                                #value = value
+                                ) %>%
                 osmdata_sf()
         }, timeout = timeout_sec, onTimeout = "error")
     },
