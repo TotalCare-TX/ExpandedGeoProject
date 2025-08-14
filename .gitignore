@@ -1,26 +1,20 @@
 # ----------------------------
 # .gitignore for R + renv project
 # ----------------------------
-
 # Ignore renv's project-local package library (restorable via renv.lock)
 renv/library/
-
 # Ignore temporary renv files (e.g., used during install)
 renv/staging/
-
 # Ignore renv's hidden folder for local project metadata (safe to exclude)
 .renv/
-
 # R session files
 .Rhistory
 .Rapp.history
 .RData
 .Ruserdata
-
 # RStudio session files
 .Rproj.user/
 *.Rproj
-
 # Other temporary or OS-specific files
 .DS_Store
 Thumbs.db
@@ -28,3 +22,4 @@ Thumbs.db
 .Rdata
 .httr-oauth
 .quarto
+osm_cache
