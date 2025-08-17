@@ -231,17 +231,14 @@ write_feature_rds <- function(res_list, spec, tile_stub, tile_idx) {
   out <- bind_feature(res_list, spec)
   if (is.null(out) || !inherits(out, "sf") || nrow(out) == 0) return(files_written)
   
-  # filter by scope (e.g., highway %in% values), if the key column exists
   if (!is.null(spec$values) && length(spec$values) > 0 && spec$key %in% names(out)) {
     out <- dplyr::filter(out, .data[[spec$key]] %in% spec$values)
     if (nrow(out) == 0) return(files_written)
   }
   
-  # CRS ensure + simplify
   out <- ensure_lonlat(out)
   out <- simplify_feature(out, spec$simplify, spec$tol, spec$tol_units, spec$projected_crs)
   
-  # keep attrs
   if (length(spec$keep_attrs) == 0) {
     out <- out["geometry"]
   } else {
@@ -249,7 +246,6 @@ write_feature_rds <- function(res_list, spec, tile_stub, tile_idx) {
     out <- out[, keep, drop = FALSE]
   }
   
-  # annotate + save
   out$tile_index  <- tile_idx
   out$feature_tag <- spec$tag
   
@@ -311,7 +307,7 @@ first_incomplete_tile <- function(progress, total_tiles, features) {
   if (length(candidates) == 0) 1L else min(candidates)
 }
 
-# ------------ Main Loop (data-driven) ------------
+# ------------ Main Loop ------------
 total_tiles <- length(final_tiles)
 start_tile  <- first_incomplete_tile(progress, total_tiles, features)
 cat(sprintf("Starting download for %d tiles and %d features. Resuming at tile %d.\n",
@@ -355,7 +351,6 @@ for (tile_idx in seq(from = start_tile, to = total_tiles)) {
     
     q <- opq(bbox = bbox_vec, timeout = OSM_TIMEOUT_SEC)
     
-    # Single vs multi-value queries; always build a list of osm results
     res_list <- list()
     if (length(spec$values) <= 1 || (length(spec$values) == 1 && is.na(spec$values[1]))) {
       q1 <- if (length(spec$values) == 0 || is.na(spec$values[1]))
@@ -384,7 +379,6 @@ for (tile_idx in seq(from = start_tile, to = total_tiles)) {
       next
     }
     
-    # Write output(s)
     files <- character(0)
     err   <- NULL
     files <- try(write_feature_rds(res_list, spec, tile_stub, tile_idx), silent = TRUE)
@@ -415,3 +409,4 @@ for (tile_idx in seq(from = start_tile, to = total_tiles)) {
 }
 
 cat("All done.\n")
+
