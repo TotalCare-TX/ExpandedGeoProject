@@ -1,9 +1,5 @@
 # ============================
-# OSM Downloader 
-# - Features:
-#     restaurants -> osm_points + centroids
-#     highways    -> osm_lines + osm_multilines 
-# - Resumes by skipping existing files; logs to CSV
+# OSM Downloader
 # ============================
 
 options(stringsAsFactors = FALSE)
@@ -12,372 +8,410 @@ suppressPackageStartupMessages({
   library(osmdata)
   library(dplyr)
   library(readr)
-  library(purrr)
   library(stringr)
+  library(purrr)
 })
 
-# ------------ Setup -------------
-tiles_path          <- "final_tiles.rds"
-output_root         <- "tile_downloads"
-progress_csv        <- file.path(output_root, "download_progress.csv")
-sleep_between_calls <- 1.0
-opq_timeout_sec     <- 120
+# ------------ Config------------
+OUTPUT_LONLAT_EPSG <- 4326   
+OSM_TIMEOUT_SEC    <- 120
 
-feature_dirs <- list(
-  restaurants = file.path(output_root, "restaurants"),
-  highways    = file.path(output_root, "highways")
+
+features <- list(
+  restaurant = list(
+    key                = "amenity",
+    values             = "restaurant",
+    tag                = "restaurants",
+    target_geom        = "POINT",
+    include_multilines = FALSE,
+    centroid_polys     = TRUE,
+    simplify           = FALSE,
+    tol                = 0,
+    tol_units          = "deg",
+    projected_crs      = NA_integer_,
+    keep_attrs         = character(0)       
+  ),
+  highway = list(
+    key                = "highway",
+    values             = c("motorway","trunk","primary"),
+    tag                = "highways_major",
+    target_geom        = "LINESTRING",
+    include_multilines = FALSE,               
+    simplify           = TRUE,
+    tol                = 0.001,               
+    tol_units          = "deg",               
+    projected_crs      = NA_integer_,         
+    keep_attrs         = character(0)         
+  )
+ 
 )
 
+# ------------ Paths & Setup ------------
+tiles_path   <- "final_tiles.rds"
+output_root  <- "tile_downloads"
+progress_csv <- "download_progress.csv"
 dir.create(output_root, showWarnings = FALSE, recursive = TRUE)
-purrr::walk(feature_dirs, ~dir.create(.x, showWarnings = FALSE, recursive = TRUE))
 
-# ------------ Helpers ------------
-# Reproject a tile’s sfc geometry to WGS84 (EPSG:4326) and returns its bounding box
+if (!file.exists(tiles_path)) stop("final_tiles.rds not found.")
+final_tiles <- readRDS(tiles_path)
+if (!is.list(final_tiles)) stop("final_tiles must be a list.")
+stopifnot(all(c("geometry","buffer","status") %in% names(final_tiles[[1]])))
 
+# ------------ Helpers------------
+# Return bbox in OUTPUT_LONLAT_EPSG as numeric c(xmin, ymin, xmax, ymax)
 tile_bbox_wgs84 <- function(sfc_geom) {
   if (!inherits(sfc_geom, "sfc")) stop("geometry must be an sfc object")
-  if (is.na(sf::st_crs(sfc_geom))) stop("Tile geometry has no CRS.")
-  g84 <- suppressWarnings(sf::st_transform(sfc_geom, 4326))
-  sf::st_bbox(g84)
+  if (is.na(st_crs(sfc_geom)))   stop("Tile geometry has no CRS.")
+  g84 <- suppressWarnings(st_transform(sfc_geom, OUTPUT_LONLAT_EPSG))
+  as.numeric(st_bbox(g84))
 }
-# Extract/normalize the bbox
-.as_bbox_vec <- function(x) {
-  if (inherits(x, "bbox")) return(as.numeric(c(x["xmin"], x["ymin"], x["xmax"], x["ymax"])))
-  if (is.numeric(x) && length(x) >= 4) return(as.numeric(x[1:4]))
-  if (is.list(x)) {
-    if (!is.null(x$geometry) && inherits(x$geometry, "sfc")) {
-      return(as.numeric(tile_bbox_wgs84(x$geometry[1])))
-    }
-    nm <- names(x)
-    schemes <- list(
-      c("xmin","ymin","xmax","ymax"),
-      c("minx","miny","maxx","maxy"),
-      c("left","bottom","right","top"),
-      c("west","south","east","north"),
-      c("lon_min","lat_min","lon_max","lat_max"),
-      c("x_min","y_min","x_max","y_max")
-    )
-    for (sch in schemes) if (!is.null(nm) && all(sch %in% nm)) return(as.numeric(unlist(x[sch])))
-    if (!is.null(x$bbox)) return(.as_bbox_vec(x$bbox))
-  }
-  stop("Could not interpret bbox from object.")
-}
+# It filters a list by removing elements that are NULL or sf objects with zero rows, returning only the non-empty items
+.compact <- function(x) x[!vapply(x, function(z) is.null(z) || (inherits(z,"sf") && nrow(z)==0), logical(1))]
 
-get_bbox_from_tile <- function(tile_obj) {
-  if (inherits(tile_obj, "sf")) {
-    g <- sf::st_geometry(tile_obj); if (length(g) < 1) stop("sf tile has no geometry.")
-    return(as.numeric(tile_bbox_wgs84(g[1])))
-  }
-  if (inherits(tile_obj, "sfc")) {
-    if (length(tile_obj) < 1) stop("sfc tile has no geometry.")
-    return(as.numeric(tile_bbox_wgs84(tile_obj[1])))
-  }
-  return(.as_bbox_vec(tile_obj))
-}
 
-# Safety check to confirm an OSM layer is non-empty and usable
-has_rows <- function(x) {
-  !is.null(x) && inherits(x, "sf") && nrow(x) > 0 && ncol(x) > 0 && !is.null(sf::st_geometry(x))
-}
-
-# This step cleans up list-columns and fixes problematic column names so GeoPackage writes don’t fail again.
-# Turns an sf object into a GPKG-safe table: flattens list-columns (except geometry) to strings.
-# Cleans non-geometry column names while preserving the geometry column, so st_write() won’t error
-
-prep_for_write <- function(x) {
-  if (is.null(x) || !inherits(x, "sf")) return(x)
-  geo_col <- attr(x, "sf_column")
-  if (is.null(geo_col) || !(geo_col %in% names(x))) stop("sf object has no recognized geometry column.")
-  MAXLEN <- 63
-  
-  is_list_col <- vapply(x, is.list, logical(1))
-  if (any(is_list_col)) {
-    is_list_col[names(x) == geo_col] <- FALSE
-    x[is_list_col] <- lapply(x[is_list_col], function(col) {
-      vapply(col, function(v) if (is.null(v)) "" else paste0(v, collapse = ";"), character(1))
-    })
-  }
-  
-  nm      <- names(x)
-  geo_idx <- which(nm == geo_col)
-  out     <- nm
-  used_lc <- tolower(nm[geo_idx])   
-  
-  sanitize_base <- function(s) {
-    s <- gsub("[^A-Za-z0-9_]+", "_", s)    
-    s <- gsub("^([0-9])", "X\\1", s)        
-    if (s == "") s <- "X"
-    s
-  }
-  
-  make_unique_trunc <- function(base, used_lc, maxlen = MAXLEN) {
-    if (tolower(base) %in% c("geom", used_lc)) base <- paste0(base, "_attr")
-    cand <- substr(base, 1, maxlen)
-    if (!(tolower(cand) %in% used_lc)) return(list(name = cand, used = c(used_lc, tolower(cand))))
-    k <- 1
-    repeat {
-      suffix <- paste0("_", k)
-      lim    <- maxlen - nchar(suffix)
-      if (lim < 1) lim <- 1
-      cand2  <- paste0(substr(base, 1, lim), suffix)
-      if (!(tolower(cand2) %in% used_lc)) return(list(name = cand2, used = c(used_lc, tolower(cand2))))
-      k <- k + 1
-    }
-  }
-  
-  for (j in seq_along(nm)) {
-    if (j == geo_idx) next  
-    base <- sanitize_base(nm[j])
-    mk   <- make_unique_trunc(base, used_lc, MAXLEN)
-    out[j]  <- mk$name
-    used_lc <- mk$used
-  }
-  
-  names(x) <- out
-  attr(x, "sf_column") <- geo_col
-  x
-}
-
-# Centroid helper
-# Computes a centroid robustly for polygon sf data: try st_centroid(), and if that errors, temporarily turn s2 off and try again.
+# This function It safely turns restaurant polygons into single points
+# try a centroid, if that fails, use a point on the surface; if shapes are invalid, fix them and retry so you always get usable points without errors
 
 safe_centroid <- function(x) {
   if (is.null(x) || !inherits(x, "sf") || nrow(x) == 0) return(NULL)
-  
-  # Try current s2 setting
-  res <- try(sf::st_centroid(x), silent = TRUE)
-  if (!inherits(res, "try-error")) return(res)
-  
-  # Temporarily turn s2 OFF 
-  old <- sf::sf_use_s2()
-  if (isTRUE(old)) {
-    suppressMessages(sf::sf_use_s2(FALSE))
-    on.exit(suppressMessages(sf::sf_use_s2(old)), add = TRUE)
-  }
-  
-  res <- try(sf::st_centroid(x), silent = TRUE)
-  if (!inherits(res, "try-error")) return(res)
-  
-
-  res <- try(sf::st_point_on_surface(x), silent = TRUE)
-  if (!inherits(res, "try-error")) return(res)
-  
-  if ("st_make_valid" %in% getNamespaceExports("sf")) {
-    xv <- try(sf::st_make_valid(x), silent = TRUE)
-    if (!inherits(xv, "try-error")) {
-      res <- try(sf::st_point_on_surface(xv), silent = TRUE)
-      if (!inherits(res, "try-error")) return(res)
-      res <- try(sf::st_centroid(xv), silent = TRUE)
-      if (!inherits(res, "try-error")) return(res)
-    }
+  out <- try(sf::st_centroid(x), silent = TRUE); if (!inherits(out, "try-error")) return(out)
+  out <- try(sf::st_point_on_surface(x), silent = TRUE); if (!inherits(out, "try-error")) return(out)
+  xv  <- try(suppressWarnings(sf::st_make_valid(x)), silent = TRUE)
+  if (!inherits(xv, "try-error")) {
+    out <- try(sf::st_centroid(xv), silent = TRUE); if (!inherits(out, "try-error")) return(out)
   }
   NULL
 }
 
-# Progress log
-if (!file.exists(progress_csv)) {
-  readr::write_csv(
-    tibble::tibble(
-      timestamp = character(),
-      tile_idx  = integer(),
-      feature   = character(),
-      status    = character(),
-      note      = character()
-    ),
-    progress_csv
+# ensures the geometry column is named geometry and strips any dimensions (keeps 2D only), so downstream code can assume a consistent 2D geometry column.
+
+normalize_geom <- function(x) {
+  if (!inherits(x, "sf")) return(x)
+  geoname <- attr(x, "sf_column")
+  if (!identical(geoname, "geometry")) {
+    names(x)[names(x) == geoname] <- "geometry"
+    sf::st_geometry(x) <- "geometry"
+  }
+  x$geometry <- sf::st_zm(x$geometry, drop = TRUE, what = "ZM")
+  x
+}
+
+# It merges a bunch of sf layers that don’t share the exact same columns into one clean layer.
+bind_schema_safe <- function(lst) {
+  lst <- .compact(lst)
+  if (!length(lst)) return(NULL)
+  lst <- lapply(lst, normalize_geom)
+  cols_union <- Reduce(union, lapply(lst, function(x) setdiff(names(x), "geometry")))
+  lst <- lapply(lst, function(x) {
+    miss <- setdiff(cols_union, setdiff(names(x), "geometry"))
+    for (m in miss) x[[m]] <- NA
+    x[, c(cols_union, "geometry"), drop = FALSE]
+  })
+  out <- try(suppressWarnings(do.call(rbind, lst)), silent = TRUE)
+  if (inherits(out, "try-error")) {
+    tmp <- suppressWarnings(dplyr::bind_rows(lst))
+    out <- try(sf::st_as_sf(tmp), silent = TRUE)
+    if (inherits(out, "try-error")) return(NULL)
+  }
+  out
+}
+
+# It guarantees your layer is in WGS84 lon/lat
+ensure_lonlat <- function(x) {
+  if (is.na(sf::st_crs(x))) sf::st_crs(x) <- OUTPUT_LONLAT_EPSG
+  if (!sf::st_is_longlat(x)) x <- sf::st_transform(x, OUTPUT_LONLAT_EPSG)
+  x
+}
+
+simplify_feature <- function(x, simplify, tol, units, projected_crs) {
+  if (!simplify || tol <= 0) return(x)
+  if (units == "deg") {
+    x <- ensure_lonlat(x)
+    return(suppressWarnings(sf::st_simplify(x, dTolerance = tol, preserveTopology = TRUE)))
+  } else if (units == "m") {
+    if (is.na(projected_crs)) stop("Simplification in meters requires 'projected_crs'.")
+    x <- suppressWarnings(sf::st_transform(x, projected_crs))
+    x <- suppressWarnings(sf::st_simplify(x, dTolerance = tol, preserveTopology = TRUE))
+    x <- suppressWarnings(sf::st_transform(x, OUTPUT_LONLAT_EPSG))
+    return(x)
+  }
+  stop("Unknown tolerance units; use 'deg' or 'm'.")
+}
+
+count_osm_features <- function(osm) {
+  as.integer(
+    (if (!is.null(osm$osm_points))        nrow(osm$osm_points)        else 0L) +
+      (if (!is.null(osm$osm_lines))         nrow(osm$osm_lines)         else 0L) +
+      (if (!is.null(osm$osm_multilines))    nrow(osm$osm_multilines)    else 0L) +
+      (if (!is.null(osm$osm_polygons))      nrow(osm$osm_polygons)      else 0L) +
+      (if (!is.null(osm$osm_multipolygons)) nrow(osm$osm_multipolygons) else 0L)
   )
 }
 
-append_progress <- function(tile_idx, feature, status, note = "") {
-  readr::write_csv(
-    tibble::tibble(
-      timestamp = format(Sys.time(), "%Y-%m-%d %H:%M:%S"),
-      tile_idx  = tile_idx,
-      feature   = feature,
-      status    = status,
-      note      = note
-    ),
+count_osm_features_list <- function(res_list) {
+  if (!length(res_list)) return(0L)
+  totals <- vapply(res_list, function(osm) {
+    as.integer(
+      (if (!is.null(osm$osm_points))        nrow(osm$osm_points)        else 0L) +
+        (if (!is.null(osm$osm_lines))         nrow(osm$osm_lines)         else 0L) +
+        (if (!is.null(osm$osm_multilines))    nrow(osm$osm_multilines)    else 0L) +
+        (if (!is.null(osm$osm_polygons))      nrow(osm$osm_polygons)      else 0L) +
+        (if (!is.null(osm$osm_multipolygons)) nrow(osm$osm_multipolygons) else 0L)
+    )
+  }, integer(1))
+  sum(totals, na.rm = TRUE)
+}
+
+# ------------ Binder ------------
+bind_feature <- function(res_list, spec) {
+  tgt <- toupper(spec$target_geom)
+  if (tgt == "POINT") {
+    parts <- list()
+    for (r in res_list) {
+      if (inherits(r$osm_points, "sf") && nrow(r$osm_points) > 0)
+        parts <- c(parts, list(r$osm_points))
+      if (isTRUE(spec$centroid_polys)) {
+        if (inherits(r$osm_polygons, "sf") && nrow(r$osm_polygons) > 0)
+          parts <- c(parts, list(safe_centroid(r$osm_polygons)))
+        if (inherits(r$osm_multipolygons, "sf") && nrow(r$osm_multipolygons) > 0)
+          parts <- c(parts, list(safe_centroid(r$osm_multipolygons)))
+      }
+    }
+    out <- bind_schema_safe(parts)
+    if (is.null(out)) return(NULL)
+    try_out <- try(suppressWarnings(sf::st_cast(out, "POINT")), silent = TRUE)
+    if (!inherits(try_out, "try-error")) out <- try_out
+    return(out)
+  }
+  
+  if (tgt == "LINESTRING") {
+    parts <- list()
+    for (r in res_list) {
+      if (inherits(r$osm_lines, "sf") && nrow(r$osm_lines) > 0)
+        parts <- c(parts, list(r$osm_lines))
+      if (isTRUE(spec$include_multilines) &&
+          inherits(r$osm_multilines, "sf") && nrow(r$osm_multilines) > 0)
+        parts <- c(parts, list(r$osm_multilines))
+    }
+    out <- bind_schema_safe(parts)
+    if (is.null(out)) return(NULL)
+    gtypes <- unique(as.character(sf::st_geometry_type(out, by_geometry = TRUE)))
+    if (all(gtypes %in% c("LINESTRING","MULTILINESTRING","GEOMETRY"))) {
+      try_out <- try(suppressWarnings(sf::st_cast(out, "LINESTRING")), silent = TRUE)
+      if (inherits(try_out, "try-error")) {
+        try_out <- try(suppressWarnings(sf::st_line_merge(out)), silent = TRUE)
+      }
+      if (!inherits(try_out, "try-error")) out <- try_out
+    }
+    return(out)
+  }
+  
+  if (tgt == "POLYGON") {
+    parts <- list()
+    for (r in res_list) {
+      if (inherits(r$osm_polygons, "sf") && nrow(r$osm_polygons) > 0)
+        parts <- c(parts, list(r$osm_polygons))
+      if (inherits(r$osm_multipolygons, "sf") && nrow(r$osm_multipolygons) > 0)
+        parts <- c(parts, list(r$osm_multipolygons))
+    }
+    out <- bind_schema_safe(parts)
+    if (is.null(out)) return(NULL)
+    # cast to POLYGON (best-effort)
+    try_out <- try(suppressWarnings(sf::st_cast(out, "POLYGON")), silent = TRUE)
+    if (!inherits(try_out, "try-error")) out <- try_out
+    return(out)
+  }
+  
+  stop("Unsupported target_geom: ", spec$target_geom)
+}
+
+# ------------ Writer ------------
+write_feature_rds <- function(res_list, spec, tile_stub, tile_idx) {
+  files_written <- character(0)
+  out <- bind_feature(res_list, spec)
+  if (is.null(out) || !inherits(out, "sf") || nrow(out) == 0) return(files_written)
+  
+  # filter by scope (e.g., highway %in% values), if the key column exists
+  if (!is.null(spec$values) && length(spec$values) > 0 && spec$key %in% names(out)) {
+    out <- dplyr::filter(out, .data[[spec$key]] %in% spec$values)
+    if (nrow(out) == 0) return(files_written)
+  }
+  
+  # CRS ensure + simplify
+  out <- ensure_lonlat(out)
+  out <- simplify_feature(out, spec$simplify, spec$tol, spec$tol_units, spec$projected_crs)
+  
+  # keep attrs
+  if (length(spec$keep_attrs) == 0) {
+    out <- out["geometry"]
+  } else {
+    keep <- intersect(c(spec$keep_attrs, "geometry"), names(out))
+    out <- out[, keep, drop = FALSE]
+  }
+  
+  # annotate + save
+  out$tile_index  <- tile_idx
+  out$feature_tag <- spec$tag
+  
+  out_dir <- file.path(output_root, spec$tag)
+  dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
+  f <- paste0(tile_stub, "_", spec$tag, ".rds")
+  saveRDS(out, f)
+  files_written <- c(files_written, f)
+  files_written
+}
+
+# ------------ Progress Log ------------
+if (file.exists(progress_csv)) {
+  progress <- readr::read_csv(
     progress_csv,
-    append = TRUE
+    col_types = readr::cols(
+      tile        = readr::col_integer(),
+      feature     = readr::col_character(),
+      tag         = readr::col_character(),
+      started_at  = readr::col_character(),
+      finished_at = readr::col_character(),
+      status      = readr::col_character(),
+      n_features  = readr::col_integer(),
+      file_path   = readr::col_character(),
+      error_msg   = readr::col_character()
+    ),
+    show_col_types = FALSE
+  )
+} else {
+  progress <- tibble::tibble(
+    tile        = integer(),
+    feature     = character(),
+    tag         = character(),
+    started_at  = character(),
+    finished_at = character(),
+    status      = character(),
+    n_features  = integer(),
+    file_path   = character(),
+    error_msg   = character()
   )
 }
+save_progress <- function(df) write_csv(df, progress_csv)
 
-# ------------ Load tiles ------------
-if (!file.exists(tiles_path)) stop("final_tiles.rds not found at: ", tiles_path)
-final_tiles <- readRDS(tiles_path)
+is_done <- function(tile_idx, feature_name) {
+  any(progress$tile == tile_idx &
+        progress$feature == feature_name &
+        progress$status %in% c("Success", "Empty"))
+}
 
-n_tiles <- if (inherits(final_tiles, "sf")) nrow(final_tiles) else if (is.list(final_tiles)) length(final_tiles) else stop("final_tiles must be an sf or a list.")
-cat("Total tiles:", n_tiles, "\n")
+first_incomplete_tile <- function(progress, total_tiles, features) {
+  if (!nrow(progress)) return(1L)
+  need <- length(features)
+  done <- progress |>
+    dplyr::filter(status %in% c("Success","Empty")) |>
+    dplyr::distinct(tile, feature) |>
+    dplyr::count(tile, name = "ok")
+  complete_tiles <- done$tile[done$ok >= need]
+  candidates <- setdiff(seq_len(total_tiles), complete_tiles)
+  if (length(candidates) == 0) 1L else min(candidates)
+}
 
-# -------- Main loop --------
-# It loops over every tile, builds a WGS84 bbox, and creates an Overpass query.
-# For each tile it downloads restaurants (points + centroids of area features) and highways (lines/multilines),
-# combines them robustly, cleans column names, logs success/errors, and pauses before the next tile
-# skipping tiles whose output file already exists.
+# ------------ Main Loop (data-driven) ------------
+total_tiles <- length(final_tiles)
+start_tile  <- first_incomplete_tile(progress, total_tiles, features)
+cat(sprintf("Starting download for %d tiles and %d features. Resuming at tile %d.\n",
+            total_tiles, length(features), start_tile))
 
-for (i in seq_len(n_tiles)) {
-  tile_obj <- if (inherits(final_tiles, "sf")) final_tiles[i, , drop = FALSE] else final_tiles[[i]]
-  
-  # BBOX (WGS84)
-  bbox_vec <- try(get_bbox_from_tile(tile_obj), silent = TRUE)
+for (tile_idx in seq(from = start_tile, to = total_tiles)) {
+  tile_obj <- final_tiles[[tile_idx]]
+  if (!inherits(tile_obj$geometry, "sfc")) {
+    warning(sprintf("Tile %d has no valid sfc geometry. Skipping.", tile_idx)); next
+  }
+  bbox_vec <- try(tile_bbox_wgs84(tile_obj$geometry), silent = TRUE)
   if (inherits(bbox_vec, "try-error")) {
-    msg <- as.character(bbox_vec)
-    append_progress(i, "ALL", "error", paste0("bbox extraction failed: ", msg))
-    cat(sprintf("\nTile %d/%d -> ERROR bbox extraction: %s\n", i, n_tiles, msg))
-    next
+    warning(sprintf("Tile %d: could not build WGS84 bbox. Skipping.", tile_idx)); next
   }
   
-  cat(sprintf("\nTile %d/%d | bbox: [%.6f, %.6f, %.6f, %.6f]\n",
-              i, n_tiles, bbox_vec[1], bbox_vec[2], bbox_vec[3], bbox_vec[4]))
-  
-  q_base <- try(opq(bbox = bbox_vec, timeout = opq_timeout_sec), silent = TRUE)
-  if (inherits(q_base, "try-error")) {
-    msg <- as.character(q_base)
-    append_progress(i, "ALL", "error", paste0("opq init failed: ", msg))
-    cat("  ERROR: opq init failed -> ", msg, "\n")
-    next
-  }
-  
-# ---------------- Restaurants ----------------
-  {
-    out_path <- file.path(feature_dirs$restaurants, sprintf("tile_%03d.gpkg", i))
-    if (file.exists(out_path)) {
-      cat("  restaurants -> already exists, skipping\n")
-    } else {
-      cat("  restaurants -> Querying OSM…\n")
-      res_sf <- try({
-        q <- q_base %>% add_osm_feature(key = "amenity", value = "restaurant")
-        osm <- osmdata_sf(q)
-        
-        pts    <- osm$osm_points
-        polys  <- osm$osm_polygons
-        mpolys <- osm$osm_multipolygons
-        
-        pts_ok     <- has_rows(pts)
-        poly_pts   <- if (has_rows(polys))  safe_centroid(polys)  else NULL
-        mpoly_pts  <- if (has_rows(mpolys)) safe_centroid(mpolys) else NULL
-        
-        pieces <- list(
-          if (pts_ok) pts else NULL,
-          poly_pts,
-          mpoly_pts
-        )
-        pieces <- pieces[!vapply(pieces, is.null, logical(1))]
-        
-        if (length(pieces) == 0) {
-          append_progress(i, "restaurants", "empty", "No features in this tile")
-          cat("    restaurants -> no features; logged as empty\n")
-          NULL
-        } else {
-          dat <- try(suppressWarnings(do.call(rbind, pieces)), silent = TRUE)
-          if (inherits(dat, "try-error")) {
-            dat <- suppressWarnings(dplyr::bind_rows(pieces))
-            dat <- sf::st_as_sf(dat)  
-          }
-          
-          dat <- dplyr::mutate(dat, tile_index = i, feature_tag = "restaurants")
-          dat <- prep_for_write(dat)
-          sf::st_write(dat, dsn = out_path, layer = "data", delete_dsn = TRUE, quiet = TRUE)
-          append_progress(i, "restaurants", "done")
-          cat(sprintf("    restaurants -> Saved %s (n=%s)\n", basename(out_path), nrow(dat)))
-        }
-      }, silent = TRUE)
-      
-      if (inherits(res_sf, "try-error")) {
-        msg <- as.character(res_sf)
-        append_progress(i, "restaurants", "error", msg)
-        cat("    ERROR (restaurants): ", msg, "\n")
-      }
-      
-      Sys.sleep(sleep_between_calls)
+  for (fname in names(features)) {
+    spec <- features[[fname]]
+    if (is_done(tile_idx, fname)) {
+      cat(sprintf("Tile %d | %-14s -> already done, skipping.\n", tile_idx, fname)); next
     }
-  }
-  
-  # ---------------- Highways ----------------
-  {
-    out_path <- file.path(feature_dirs$highways, sprintf("tile_%03d.gpkg", i))
-    if (file.exists(out_path)) {
-      cat("  highways -> already exists, skipping\n")
+    
+    feat_dir  <- file.path(output_root, spec$tag)
+    dir.create(feat_dir, showWarnings = FALSE, recursive = TRUE)
+    tile_stub <- file.path(feat_dir, sprintf("tile_%03d", tile_idx))
+    
+    row_stub <- tibble(
+      tile        = tile_idx,
+      feature     = fname,
+      tag         = spec$tag,
+      started_at  = format(Sys.time(), "%Y-%m-%dT%H:%M:%OS%z"),
+      finished_at = NA_character_,
+      status      = NA_character_,
+      n_features  = NA_integer_,
+      file_path   = paste0(tile_stub, "_", spec$tag, ".rds"),
+      error_msg   = NA_character_
+    )
+    progress <- bind_rows(progress, row_stub); save_progress(progress)
+    
+    cat(sprintf("Tile %d/%d | Feature: %s | Querying OSM…\n",
+                tile_idx, total_tiles, fname))
+    
+    q <- opq(bbox = bbox_vec, timeout = OSM_TIMEOUT_SEC)
+    
+    # Single vs multi-value queries; always build a list of osm results
+    res_list <- list()
+    if (length(spec$values) <= 1 || (length(spec$values) == 1 && is.na(spec$values[1]))) {
+      q1 <- if (length(spec$values) == 0 || is.na(spec$values[1]))
+        add_osm_feature(q, key = spec$key)
+      else
+        add_osm_feature(q, key = spec$key, value = spec$values)
+      r1 <- try(osmdata_sf(q1), silent = TRUE)
+      if (!inherits(r1, "try-error")) res_list <- list(r1) else res_list <- list()
     } else {
-      cat("  highways -> Querying OSM…\n")
-      res_sf <- try({
-        q <- q_base %>% add_osm_feature(key = "highway")
-        osm <- osmdata_sf(q)
-        
-        ln  <- osm$osm_lines
-        mln <- osm$osm_multilines
-        
-        ln_ok  <- has_rows(ln)
-        mln_ok <- has_rows(mln)
-        
-        if (!ln_ok && !mln_ok) {
-          append_progress(i, "highways", "empty", "No features in this tile")
-          cat("    highways -> no features; logged as empty\n")
-          NULL
-        } else {
-          bind_ok <- TRUE
-          dat <- NULL
-          if (ln_ok && mln_ok) {
-            dat <- try(suppressWarnings(do.call(rbind, list(
-              dplyr::mutate(ln,  tile_index = i, feature_tag = "highways"),
-              dplyr::mutate(mln, tile_index = i, feature_tag = "highways")
-            ))), silent = TRUE)
-            if (inherits(dat, "try-error")) {
-              dat <- try(suppressWarnings(dplyr::bind_rows(
-                dplyr::mutate(ln,  tile_index = i, feature_tag = "highways"),
-                dplyr::mutate(mln, tile_index = i, feature_tag = "highways")
-              )), silent = TRUE)
-              if (inherits(dat, "try-error")) bind_ok <- FALSE else dat <- sf::st_as_sf(dat)
-            }
-          }
-          
-          if (bind_ok && (ln_ok || mln_ok)) {
-            if (is.null(dat)) {
-              dat <- if (ln_ok) dplyr::mutate(ln,  tile_index = i, feature_tag = "highways")
-              else        dplyr::mutate(mln, tile_index = i, feature_tag = "highways")
-            }
-            dat <- prep_for_write(dat)
-            sf::st_write(dat, dsn = out_path, layer = "data", delete_dsn = TRUE, quiet = TRUE)
-            append_progress(i, "highways", "done")
-            cat(sprintf("    highways -> Saved %s (n=%s)\n", basename(out_path), nrow(dat)))
-          } else {
-            wrote_any <- FALSE
-            if (ln_ok) {
-              ln2 <- dplyr::mutate(ln, tile_index = i, feature_tag = "highways_lines")
-              ln2 <- prep_for_write(ln2)
-              sf::st_write(ln2, dsn = out_path, layer = "lines", delete_dsn = TRUE, quiet = TRUE)
-              wrote_any <- TRUE
-            }
-            if (mln_ok) {
-              mln2 <- dplyr::mutate(mln, tile_index = i, feature_tag = "highways_multilines")
-              mln2 <- prep_for_write(mln2)
-              sf::st_write(mln2, dsn = out_path, layer = "multilines",
-                           delete_layer = TRUE, quiet = TRUE)
-              wrote_any <- TRUE
-            }
-            if (wrote_any) {
-              append_progress(i, "highways", "done", "Wrote separate layers (lines/multilines)")
-              cat(sprintf("    highways -> Saved %s as separate layers%s%s\n",
-                          basename(out_path),
-                          if (ln_ok) " [lines]" else "",
-                          if (mln_ok) " [multilines]" else ""))
-            } else {
-              append_progress(i, "highways", "empty", "No valid sf layers after prep")
-              cat("    highways -> no valid layers after prep; logged as empty\n")
-            }
-          }
-        }
-      }, silent = TRUE)
-      
-      if (inherits(res_sf, "try-error")) {
-        msg <- as.character(res_sf)
-        append_progress(i, "highways", "error", msg)
-        cat("    ERROR (highways): ", msg, "\n")
+      for (v in spec$values) {
+        qv <- add_osm_feature(q, key = spec$key, value = v)
+        rv <- try(osmdata_sf(qv), silent = TRUE)
+        if (!inherits(rv, "try-error")) res_list <- append(res_list, list(rv))
       }
-      
-      Sys.sleep(sleep_between_calls)
     }
+    
+    n_total <- count_osm_features_list(res_list)
+    if (n_total == 0) {
+      cat(sprintf("Tile %d | %s -> Empty result.\n", tile_idx, fname))
+      sel <- which(progress$tile == tile_idx & progress$feature == fname & is.na(progress$finished_at)); if (length(sel)) sel <- tail(sel, 1)
+      progress$status[sel]      <- "Empty"
+      progress$n_features[sel]  <- 0L
+      progress$finished_at[sel] <- format(Sys.time(), "%Y-%m-%dT%H:%M:%OS%z")
+      save_progress(progress)
+      Sys.sleep(runif(1, 0.8, 1.6))
+      next
+    }
+    
+    # Write output(s)
+    files <- character(0)
+    err   <- NULL
+    files <- try(write_feature_rds(res_list, spec, tile_stub, tile_idx), silent = TRUE)
+    if (inherits(files, "try-error")) err <- as.character(files)
+    
+    if (!is.null(err)) {
+      cat(sprintf("Tile %d | %s -> ERROR: %s\n", tile_idx, fname, err))
+      sel <- which(progress$tile == tile_idx & progress$feature == fname & is.na(progress$finished_at)); if (length(sel)) sel <- tail(sel, 1)
+      progress$status[sel]      <- "Error"
+      progress$error_msg[sel]   <- str_trunc(err, 300)
+      progress$finished_at[sel] <- format(Sys.time(), "%Y-%m-%dT%H:%M:%OS%z")
+      save_progress(progress)
+      next
+    }
+    
+    cat(sprintf("Tile %d | %s -> Saved %d features into %s (%d file%s)\n",
+                tile_idx, fname, n_total, paste0(tile_stub, "_", spec$tag, ".rds"),
+                length(files), ifelse(length(files)==1,"","s")))
+    
+    sel <- which(progress$tile == tile_idx & progress$feature == fname & is.na(progress$finished_at)); if (length(sel)) sel <- tail(sel, 1)
+    progress$status[sel]      <- "Success"
+    progress$n_features[sel]  <- n_total
+    progress$finished_at[sel] <- format(Sys.time(), "%Y-%m-%dT%H:%M:%OS%z")
+    save_progress(progress)
+    
+    Sys.sleep(runif(1, 0.8, 1.6))  # polite jitter
   }
-}  
+}
 
-cat("\nAll done. Progress log at:", progress_csv, "\n")
+cat("All done.\n")
