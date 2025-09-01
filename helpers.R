@@ -69,11 +69,16 @@ scaled_ppd <- function(ed_base, ed_fac) {
   
   
   # Scaling the number of patients for each facility in each quarter, then computing the scaled ppd 
+  # avg_ppq_scaled <- avg_ppq_2 %>% left_join(fac_scaling) %>% 
+  #   mutate(scaled_n = n*Scaling_Factor,
+  #          days = case_when(grepl("Q1", Year_Quarter, ignore.case =T) ~ ifelse(lubridate::leap_year(as.numeric(substr(gsub("\\D", "", Year_Quarter),1,4))), 91, 90),
+  #                           grepl("Q2", Year_Quarter, ignore.case =T) ~ 91,
+  #                           TRUE ~ 92)) %>% group_by(THCIC_ID) %>%
+  #   summarise(scaled_ppd = sum(scaled_n)/sum(days))
+  
   avg_ppq_scaled <- avg_ppq_2 %>% left_join(fac_scaling) %>% 
-    mutate(scaled_n = n*Scaling_Factor,
-           days = case_when(grepl("Q1", Year_Quarter, ignore.case =T) ~ ifelse(lubridate::leap_year(as.numeric(substr(gsub("\\D", "", Year_Quarter),1,4))), 91, 90),
-                            grepl("Q2", Year_Quarter, ignore.case =T) ~ 91,
-                            TRUE ~ 92)) %>% group_by(THCIC_ID) %>%
+    left_join(qtr_days) %>% 
+    mutate(scaled_n = n*Scaling_Factor) %>% group_by(THCIC_ID) %>%
     summarise(scaled_ppd = sum(scaled_n)/sum(days))
   
 }
