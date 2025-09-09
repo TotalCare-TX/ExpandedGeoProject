@@ -16,7 +16,10 @@ packages <- c(
     "leaflet",
     "raster",
     "httr",
-    "jsonlite"
+    "jsonlite",
+    "units",
+    "future.apply",
+    "lwgeom"
 )
 
 # Install missing packages using renv

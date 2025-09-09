@@ -24,3 +24,4 @@ Thumbs.db
 .quarto
 osm_cache
 CopyOffinal_tiles.rds
+data/
