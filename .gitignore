@@ -25,3 +25,4 @@ Thumbs.db
 osm_cache
 CopyOffinal_tiles.rds
 data/
+tile_downloads/
