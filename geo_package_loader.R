@@ -19,7 +19,8 @@ packages <- c(
     "jsonlite",
     "units",
     "future.apply",
-    "lwgeom"
+    "lwgeom",
+    "terra"
 )
 
 # Install missing packages using renv

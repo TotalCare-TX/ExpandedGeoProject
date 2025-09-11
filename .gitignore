@@ -25,3 +25,8 @@ Thumbs.db
 osm_cache
 CopyOffinal_tiles.rds
 data/
+tile_downloads/
+download_progress.csv
+feature_rasters/
+kde_rasters/
+raster_progress.csv

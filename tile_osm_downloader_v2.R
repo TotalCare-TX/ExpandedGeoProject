@@ -82,6 +82,23 @@ generate_feature_lists <- function(key,
     
 }
 
+generate_current_feature_list <- function() {
+    
+    restaurant <- generate_feature_lists(key = "amenity", values = "restaurant", tag = "restaurant")
+    school <- generate_feature_lists(key = "amenity", values = "school", tag = "school")
+    pharmacy <- generate_feature_lists(key = "amenity", values = "pharmacy", tag = "pharmacy")
+    library <- generate_feature_lists(key = "amenity", values = "library", tag = "library")
+    shop <- generate_feature_lists(key = "shop", values = NULL, tag = "shop")
+    pawnbroker <- generate_feature_lists(key = "shop", values = "pawnbroker", tag = "pawnbroker")
+    gold_buyer <- generate_feature_lists(key = "shop", values = "gold_buyer", tag = "gold_buyer")
+    supermarket <- generate_feature_lists(key = "shop", values = "supermarket", tag = "supermarket")
+    traffic_signals <- generate_feature_lists(key = "highway", values = "traffic_signals", tag = "traffic_signals")
+    highway_major <- generate_feature_lists(key = "highway", values = c("motorway", "trunk", "primary"), tag = "highway_major")
+    
+    return(list(restaurant, school, pharmacy, library, shop, pawnbroker, gold_buyer, supermarket, traffic_signals, highway_major))
+    
+}
+
 # ---------------------------------------------------------
 #  Configuration (defaults; override via run_osm_downloader args)
 # ---------------------------------------------------------
@@ -349,7 +366,6 @@ load_or_init_progress <- function(progress_csv) {
             progress_csv,
             col_types = readr::cols(
                 tile        = readr::col_integer(),
-                feature     = readr::col_character(),
                 tag         = readr::col_character(),
                 started_at  = readr::col_character(),
                 finished_at = readr::col_character(),
@@ -363,7 +379,6 @@ load_or_init_progress <- function(progress_csv) {
     } else {
         progress <- tibble::tibble(
             tile        = integer(),
-            feature     = integer(),
             tag         = character(),
             started_at  = character(),
             finished_at = character(),
@@ -387,6 +402,23 @@ is_done <- function(progress, tile_idx, tag) {
     sel <- which(progress$tile == tile_idx &
                      progress$tag == tag &
                      progress$status == "Success")
+    
+    if(length(sel) == 0) {
+        
+        FALSE
+        
+    } else {
+        
+        TRUE
+        
+    }
+    
+}
+
+is_empty <- function(progress, tile_idx, tag) {
+    sel <- which(progress$tile == tile_idx &
+                     progress$tag == tag &
+                     progress$status == "Empty")
     
     if(length(sel) == 0) {
         
@@ -456,7 +488,8 @@ run_osm_downloader <- function(
         output_root   = "tile_downloads",
         progress_csv  = "download_progress.csv",
         osm_timeout_sec = DEFAULT_OSM_TIMEOUT_SEC,
-        output_epsg     = DEFAULT_OUTPUT_LONLAT_EPSG
+        output_epsg     = DEFAULT_OUTPUT_LONLAT_EPSG,
+        tile_stop = -1
 ) {
     # --- Inputs & setup ---
     if (!file.exists(final_tiles_path)) stop("Tiles file not found: ", final_tiles_path)
@@ -474,12 +507,13 @@ run_osm_downloader <- function(
     #I don't think we need this function for determining the start tile, yet. As long as we skip tiles that aren't done.
     #start_tile  <- first_incomplete_tile(progress, total_tiles, feature_specs)
     start_tile <- 1
+    if (tile_stop == -1) {tile_stop <- length(final_tiles)}
     
     cat(sprintf("Starting download for %d tiles and %d features. Resuming at tile %d.\n",
                 total_tiles, length(feature_specs), start_tile))
     
     # --- Tile loop ---
-    for (tile_idx in seq(from = start_tile, to = total_tiles)) {
+    for (tile_idx in seq(from = start_tile, to = tile_stop)) {
         
         tile_obj <- final_tiles[[tile_idx]]
         
@@ -501,6 +535,11 @@ run_osm_downloader <- function(
             
             if (is_done(progress, tile_idx, spec$tag)) {
                 cat(sprintf("Tile %d | %-16s -> already done, skipping.\n", tile_idx, spec$tag))
+                next
+            }
+            
+            if (is_empty(progress, tile_idx, spec$tag)) {
+                cat(sprintf("Tile %d | %-16s -> already done and empty, skipping.\n", tile_idx, spec$tag))
                 next
             }
             

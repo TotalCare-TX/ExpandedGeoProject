@@ -14,7 +14,7 @@ tiles_path       <- "final_tiles.rds"
 download_root    <- "tile_downloads"         
 feature_out_root <- "feature_rasters"        
 kde_out_root     <- "kde_rasters"           
-progress_csv     <- "progress.csv"           
+progress_csv     <- "raster_progress.csv"           
 
 dir.create(feature_out_root, showWarnings = FALSE, recursive = TRUE)
 dir.create(kde_out_root,     showWarnings = FALSE, recursive = TRUE)
