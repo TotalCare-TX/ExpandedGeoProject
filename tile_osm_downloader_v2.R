@@ -415,6 +415,23 @@ is_done <- function(progress, tile_idx, tag) {
     
 }
 
+is_empty <- function(progress, tile_idx, tag) {
+    sel <- which(progress$tile == tile_idx &
+                     progress$tag == tag &
+                     progress$status == "Empty")
+    
+    if(length(sel) == 0) {
+        
+        FALSE
+        
+    } else {
+        
+        TRUE
+        
+    }
+    
+}
+
 first_incomplete_tile <- function(progress, total_tiles, features) {
     if (!nrow(progress)) return(1L)
     need <- length(features)
@@ -518,6 +535,11 @@ run_osm_downloader <- function(
             
             if (is_done(progress, tile_idx, spec$tag)) {
                 cat(sprintf("Tile %d | %-16s -> already done, skipping.\n", tile_idx, spec$tag))
+                next
+            }
+            
+            if (is_empty(progress, tile_idx, spec$tag)) {
+                cat(sprintf("Tile %d | %-16s -> already done and empty, skipping.\n", tile_idx, spec$tag))
                 next
             }
             
