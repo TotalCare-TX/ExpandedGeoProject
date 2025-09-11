@@ -215,3 +215,26 @@ points_list <- lapply(seq_len(nrow(tiles_5070)), tile_points_one)
 # Save a single RDS with the list
 saveRDS(points_list, file.path(data_dir, "house_points_by_tile.rds"))
 
+#Finally, in order to standardize our outputs, this will be placed in a target directory and subdivided by file in the same manner as our other downloaded OSM data.
+
+output_root <- file.path("tile_downloads", "microsoft_housing")
+
+dir.create(output_root, showWarnings = FALSE, recursive = TRUE)
+
+for (i in 1:length(points_list)) {
+    
+    if (nrow(points_list[[i]]) == 0) {next}
+    
+    tile_stub <- paste0(sprintf("tile_%03d", points_list[[i]]$tile_id[1]))
+    
+    f <- file.path(output_root, paste0(tile_stub, "_microsoft_housing.rds"))
+    
+    out <- points_list[[i]] |>
+        dplyr::select(c(tile_id, geometry)) |>
+        rename(tile_index = tile_id) |>
+        mutate(feature_tag = "microsoft_housing")
+    
+    saveRDS(out, f)
+    
+}
+
