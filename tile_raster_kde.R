@@ -301,6 +301,11 @@ if (isTRUE(RUN_STEP2_KDE)) {
     
     for (s in SIGMAS_M) {
       out_file <- kde_path_for(tag, s)
+      
+      if (file.exists(out_file)) {
+          cat(sprintf("Skipping tag %-16s | σ=%4dm -> %s\n", tag, s, basename(out_file)))
+          next}
+      
       K <- kernels[[as.character(s)]]
       
       # NA-aware smoothing:

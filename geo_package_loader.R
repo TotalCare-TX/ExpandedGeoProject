@@ -20,7 +20,8 @@ packages <- c(
     "units",
     "future.apply",
     "lwgeom",
-    "terra"
+    "terra",
+    "DT"
 )
 
 # Install missing packages using renv
