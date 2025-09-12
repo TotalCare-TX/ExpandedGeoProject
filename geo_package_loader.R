@@ -21,7 +21,9 @@ packages <- c(
     "future.apply",
     "lwgeom",
     "terra",
-    "DT"
+    "shiny",
+    "bslib",
+    "leafem"
 )
 
 # Install missing packages using renv
