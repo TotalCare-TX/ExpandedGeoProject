@@ -11,6 +11,7 @@ library(shiny)
 library(raster)
 library(leaflet)
 library(terra)
+library(leafem)
 
 # Define server logic required to draw a histogram
 function(input, output, session) {
@@ -30,7 +31,8 @@ function(input, output, session) {
             addProviderTiles("CartoDB.Positron") |>
             addRasterImage(rr, colors = pal, opacity = 0.8, project = FALSE) |>
             addLegend("bottomright", pal = pal, values = vals, title = "Value") |>
-            fitBounds(lng1 = xmin(rr), lat1 = ymin(rr), lng2 = xmax(rr), lat2 = ymax(rr))
+            fitBounds(lng1 = xmin(rr), lat1 = ymin(rr), lng2 = xmax(rr), lat2 = ymax(rr)) |>
+            addMouseCoordinates()
     })
 
 }
