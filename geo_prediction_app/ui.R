@@ -27,11 +27,7 @@ shinyUI(
                     tags$li("These coordinates will also be sent automatically to the Site Prediction tab.")
                   )
                 ),
-                leafletOutput("prediction_map"),
-                wellPanel(
-                  h5("Selected Coordinates:"),
-                  textOutput("clicked_coords")
-                )
+                leafletOutput("prediction_map")
       ),
       
       # -------------------

@@ -54,17 +54,17 @@ get_coordinates <- function(input_text) {
 # MAIN SCRIPT 
 
 # Enter your location between quotes
-input <- "Enter Location Here"
+#input <- "Enter Location Here"
 
 # Call function
-result <- get_coordinates(input)
+#result <- get_coordinates(input)
 
 # Display result
-if (!is.null(result$status) && result$status == "success") {
-  cat("Location found:\n")
-  cat("Display Name:", result$display_name, "\n")
-  cat("Latitude:", result$latitude, "\n")
-  cat("Longitude:", result$longitude, "\n")
-} else {
-  cat("Error:", result$message, "\n")
-}
+#if (!is.null(result$status) && result$status == "success") {
+  #cat("Location found:\n")
+  #cat("Display Name:", result$display_name, "\n")
+  #cat("Latitude:", result$latitude, "\n")
+  #cat("Longitude:", result$longitude, "\n")
+#} else {
+  #cat("Error:", result$message, "\n")
+#}

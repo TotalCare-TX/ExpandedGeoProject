@@ -4,10 +4,14 @@ library(terra)
 library(leaflet)
 library(leafem)
 
+source("find_address_coordinates.R")
+
 server <- function(input, output, session) {
   
-  # Reactive value to store clicked coords
-  clicked_coords <- reactiveVal(NULL)
+  v <- reactiveValues()
+  
+  v$lon <- ""
+  v$lat <- ""
   
   # -------------------
   # TAB 1: Map Prediction
@@ -20,34 +24,16 @@ server <- function(input, output, session) {
                  error = function(e) TRUE)) {
       r <- terra::project(r, "EPSG:4326")
     }
-    
-    rr <- raster::raster(r)
-    vals <- raster::values(rr)
+
+    vals <- terra::values(r)
     pal  <- colorNumeric("viridis", domain = range(vals, na.rm = TRUE), na.color = NA)
     
     leaflet() |>
       addProviderTiles("CartoDB.Positron") |>
-      addRasterImage(rr, colors = pal, opacity = 0.8, project = FALSE) |>
+      leaflet::addRasterImage(r, colors = pal, opacity = 0.8, project = FALSE) |>
       addLegend("bottomright", pal = pal, values = vals, title = "Value") |>
-      fitBounds(xmin(rr), ymin(rr), xmax(rr), ymax(rr)) |>
+      fitBounds(xmin(r), ymin(r), xmax(r), ymax(r)) |>
       addMouseCoordinates()
-  })
-  
-  # Capture click on the map
-  observeEvent(input$prediction_map_click, {
-    lat <- input$prediction_map_click$lat
-    lon <- input$prediction_map_click$lng
-    coords <- paste(round(lat, 5), round(lon, 5))
-    clicked_coords(coords)
-    
-    # Update UI text in tab 1
-    output$clicked_coords <- renderText({
-      paste("Lat, Lon:", coords)
-    })
-    
-    # Autofill x1 and x2 in tab 2
-    updateTextInput(session, "x1", value = round(lat, 5))
-    updateTextInput(session, "x2", value = round(lon, 5))
   })
   
   
@@ -59,14 +45,13 @@ server <- function(input, output, session) {
   # Dummy geocoding example
   observeEvent(input$geocode_btn, {
     if (nzchar(input$address)) {
-      coords <- data.frame(lat = 29.76, lon = -95.37)  # Houston, TX
+      temp_coordinates <- get_coordinates(input$address)
+      v$lat <- temp_coordinates$latitude
+      v$lon <- temp_coordinates$longitude
       output$coords <- renderText({
-        paste("Coordinates:", coords$lat, ",", coords$lon)
+        paste("Coordinates:", v$lat, ",", v$lon)
       })
       
-      # Autofill into predictors
-      updateTextInput(session, "x1", value = coords$lat)
-      updateTextInput(session, "x2", value = coords$lon)
     }
   })
   
@@ -77,11 +62,6 @@ server <- function(input, output, session) {
     model(trained)
     showNotification("Model retrained successfully!", type = "message")
   })
-  
-  # Prediction history
-  history <- reactiveVal(data.frame(x1 = numeric(),
-                                    x2 = numeric(),
-                                    prediction = numeric()))
   
   observeEvent(input$predict_button, {
     validate(
