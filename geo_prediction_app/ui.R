@@ -4,20 +4,17 @@ library(leaflet)
 
 shinyUI(
   fluidPage(
-    # ---- CSS to make map taller ----
     tags$head(
       tags$style(HTML("
         #prediction_map {
-          height: 90vh !important;  
-          width: 100% !important;   
+          height: 90vh !important;
+          width: 100% !important;
         }
       "))
     ),
     
     navset_pill(
-      # -------------------
-      # TAB 1: Map Prediction
-      # -------------------
+      # ---- TAB 1: Map Prediction ----
       nav_panel("Map Prediction",
                 wellPanel(
                   h4("📍 Instructions: Map Prediction"),
@@ -27,12 +24,11 @@ shinyUI(
                     tags$li("These coordinates will also be sent automatically to the Site Prediction tab.")
                   )
                 ),
-                leafletOutput("prediction_map")
+                leafletOutput("prediction_map"),
+                textOutput("clicked_coords")  # Show clicked coordinates
       ),
       
-      # -------------------
-      # TAB 2: Site Prediction
-      # -------------------
+      # ---- TAB 2: Site Prediction ----
       nav_panel("Site Prediction",
                 wellPanel(
                   h4("📍 Instructions: Site Prediction"),
@@ -40,23 +36,21 @@ shinyUI(
                     tags$li("Coordinates from the map will auto-fill below if you clicked on the map."),
                     tags$li("Or enter an address and click 'Geocode Address' to get coordinates."),
                     tags$li("Click 'Train Model' to load the model using `training_data.csv`."),
-                    tags$li("Click 'Predict' to generate a prediction using the chosen coordinates (or manual X1/X2 values).")
+                    tags$li("Click 'Predict' to run the ML model using the chosen coordinates.")
                   )
                 ),
                 
-                # Inputs for model
                 wellPanel(
                   textInput("address", "Enter Address:", ""),
                   actionButton("geocode_btn", "Geocode Address"),
                   textOutput("coords"),
                   tags$hr(),
+                  textInput("x1", "Latitude:", ""),
+                  textInput("x2", "Longitude:", ""),
                   actionButton("train_model", "Train Model"),
-                  textInput("x1", "Enter X1 (lat):"),
-                  textInput("x2", "Enter X2 (lon):"),
                   actionButton("predict_button", "Predict")
                 ),
                 
-                # Outputs
                 wellPanel(
                   textOutput("result"),
                   tableOutput("history_table")
