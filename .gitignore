@@ -30,3 +30,5 @@ download_progress.csv
 feature_rasters/
 kde_rasters/
 raster_progress.csv
+raster_predictions.tif
+raster_model.rds
