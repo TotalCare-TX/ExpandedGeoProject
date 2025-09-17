@@ -6,9 +6,17 @@ library(leafem)
 library(httr)
 library(jsonlite)
 library(stringr)
+library(randomForest)
 
-# ---- Load external geocoding function ----
-source("find_address_coordinates.R")  # This loads get_coordinates()
+# ---- Load external geocode function ----
+source("find_address_coordinates.R")
+
+# ---- Load pre-trained model ----
+if (file.exists("model.rds")) {
+  model <- readRDS("model.rds")
+} else {
+  stop("⚠️ model.rds not found. Please run build_model.R first.")
+}
 
 # ---- Shiny Server ----
 shinyServer(function(input, output, session) {
@@ -33,7 +41,7 @@ shinyServer(function(input, output, session) {
       addMouseCoordinates()
   })
   
-  # Capture clicks on the map
+  # Capture map clicks
   observeEvent(input$prediction_map_click, {
     lat <- input$prediction_map_click$lat
     lng <- input$prediction_map_click$lng
@@ -45,12 +53,11 @@ shinyServer(function(input, output, session) {
   })
   
   # ---- TAB 2: Site Prediction ----
-  model <- reactiveVal(NULL)
-  history <- reactiveVal(data.frame(lat = numeric(), lon = numeric(), prediction = numeric()))
+  history <- reactiveVal(data.frame(lat = numeric(), lon = numeric(), prediction = character(), confidence = numeric()))
   
   # Geocode address
   observeEvent(input$geocode_btn, {
-    res <- get_coordinates(input$address)  # <- now using external function
+    res <- get_coordinates(input$address)
     if (res$status == "success") {
       updateTextInput(session, "x1", value = res$latitude)
       updateTextInput(session, "x2", value = res$longitude)
@@ -62,30 +69,36 @@ shinyServer(function(input, output, session) {
     }
   })
   
-  # Train model (placeholder)
-  observeEvent(input$train_model, {
-    df <- read.csv("training_data.csv")
-    trained <- lm(y ~ x1 + x2, data = df)  # replace with your ML pipeline later
-    model(trained)
-    showNotification("Model trained successfully!", type = "message")
-  })
-  
-  # Predict
+  # ---- Prediction ----
   observeEvent(input$predict_button, {
-    validate(
-      need(!is.null(model()), "Please train the model first."),
-      need(input$x1 != "" && input$x2 != "", "Coordinates are required")
-    )
     
-    new_data <- data.frame(x1 = as.numeric(input$x1), x2 = as.numeric(input$x2))
-    prediction <- predict(model(), new_data)
+    # Convert inputs to numeric
+    lat <- suppressWarnings(as.numeric(input$x1))
+    lon <- suppressWarnings(as.numeric(input$x2))
     
+    # ✅ Manual validation
+    if (is.na(lat) || is.na(lon)) {
+      showNotification("Please enter valid latitude and longitude!", type = "error")
+      return(NULL)
+    }
+    
+    new_data <- data.frame(lat = lat, lon = lon)
+    
+    pred_class <- predict(model, new_data)
+    pred_probs <- predict(model, new_data, type = "prob")
+    
+    confidence <- round(100 * max(pred_probs), 1)
+    
+    # Save history
     old <- history()
-    history(rbind(old, cbind(new_data, prediction)))
+    history(rbind(old, data.frame(lat = lat, lon = lon,
+                                  prediction = as.character(pred_class),
+                                  confidence = confidence)))
     
     output$result <- renderText({
-      paste("Prediction:", round(prediction, 2))
+      paste("Prediction:", pred_class, " (Confidence:", confidence, "%)")
     })
+    
     output$history_table <- renderTable(history())
   })
 })

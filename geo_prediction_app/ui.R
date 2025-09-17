@@ -1,3 +1,5 @@
+# ui.R
+
 library(shiny)
 library(bslib)
 library(leaflet)
@@ -25,7 +27,7 @@ shinyUI(
                   )
                 ),
                 leafletOutput("prediction_map"),
-                textOutput("clicked_coords")  # Show clicked coordinates
+                textOutput("clicked_coords")
       ),
       
       # ---- TAB 2: Site Prediction ----
@@ -35,7 +37,6 @@ shinyUI(
                   tags$ol(
                     tags$li("Coordinates from the map will auto-fill below if you clicked on the map."),
                     tags$li("Or enter an address and click 'Geocode Address' to get coordinates."),
-                    tags$li("Click 'Train Model' to load the model using `training_data.csv`."),
                     tags$li("Click 'Predict' to run the ML model using the chosen coordinates.")
                   )
                 ),
@@ -47,7 +48,6 @@ shinyUI(
                   tags$hr(),
                   textInput("x1", "Latitude:", ""),
                   textInput("x2", "Longitude:", ""),
-                  actionButton("train_model", "Train Model"),
                   actionButton("predict_button", "Predict")
                 ),
                 
