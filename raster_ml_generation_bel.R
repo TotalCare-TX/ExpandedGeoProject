@@ -125,12 +125,12 @@ names(ml_table) <- sub(
 # real_raster_model <- stepped_placeholder
 # saveRDS(real_raster_model, "raster_model.rds")
 
-ml_table <- read.csv("C:/Users/e.aboud/Desktop/GitHub_GeoPrj/ml_table.csv")
-ml_table <- ml_table %>% 
-  mutate(
-    scaled_ppd = log(scaled_ppd) 
-  ) %>%
-  dplyr::select(-X)
+# ml_table <- read.csv("ml_table.csv")
+# ml_table <- ml_table %>% 
+#   mutate(
+#     scaled_ppd = log(scaled_ppd) 
+#   ) %>%
+#   dplyr::select(-X)
 
 source("ml_creation_scripts/workflow-ml.R")
 geo_formula <- create_geo_formula(ml_table, outcome_var = "scaled_ppd")
