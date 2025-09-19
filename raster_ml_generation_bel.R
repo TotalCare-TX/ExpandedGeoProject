@@ -112,21 +112,33 @@ names(ml_table) <- sub(
   names(ml_table)
 )  
 
+# # 4. The next step is to input this data into the desired model. For now, I will put 
+# #in a placeholder function that serves as a basic model for our use.
+# 
+# placeholder_model <- lm(scaled_ppd ~ ., data = ml_table)
+# 
+# stepped_placeholder <- stats::step(placeholder_model)
+# 
+# #Now we need to save this model. We will save the placeholder, but later we can 
+# #change this to the actual real model.
+# 
+# real_raster_model <- stepped_placeholder
+# saveRDS(real_raster_model, "raster_model.rds")
 
+ml_table <- read.csv("C:/Users/e.aboud/Desktop/GitHub_GeoPrj/ml_table.csv")
+ml_table <- ml_table %>% 
+  mutate(
+    scaled_ppd = log(scaled_ppd) 
+  ) %>%
+  dplyr::select(-X)
 
+source("ml_creation_scripts/workflow-ml.R")
+geo_formula <- create_geo_formula(ml_table, outcome_var = "scaled_ppd")
 
-# 4. The next step is to input this data into the desired model. For now, I will put 
-#in a placeholder function that serves as a basic model for our use.
-
-placeholder_model <- lm(scaled_ppd ~ ., data = ml_table)
-
-stepped_placeholder <- stats::step(placeholder_model)
-
-#Now we need to save this model. We will save the placeholder, but later we can 
-#change this to the actual real model.
-
-real_raster_model <- stepped_placeholder
+real_raster_model <- model_stacking(ml_table, geo_formula)
 saveRDS(real_raster_model, "raster_model.rds")
+
+# base_models <- fit_base_learners(real_raster_model, ml_table, "scaled_ppd")
 
 # 5. Next, we will construct our frame for prediction. We will do this by turning 
 #all rasters into dataframes and joining them together.
