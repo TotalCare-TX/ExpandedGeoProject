@@ -2,7 +2,7 @@
 
 #Step 1: We need to assemble our data. We will take a list of FEMC locations with lat lon in degrees and use these to gather a new dataset for performing our drilldown ML.
 
-#We will start with our list our FEMCs. Please change this location when able.
+#We will start with our list our FEMCs. Please change this location when able.!!!!!!
 
 femc_list <- readRDS("femc_clean.rds") |>
     dplyr::select(c(scaled_ppd, lat, lon))
