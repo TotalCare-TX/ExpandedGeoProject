@@ -1,46 +1,24 @@
-## Tidymodels Workflow Script ---
+## Tidymodels Workflow Script | Stacked Model Function ---
 
 ## Installing & Loading Packages ---
 # pacman::p_load(dplyr, tidymodels, stacks, spatialsample, sf, brms, MASS, doParallel, xgboost, ranger, modeldata, kknn, stringr)
 
-# library(dplyr)
-# library(tidymodels)
-# library(stacks)
-# library(spatialsample)
-# library(sf)
-# library(brms)
-# library(MASS)
-# library(doParallel)
-# library(xgboost)
-# library(ranger)
-# library(modeldata)
-# library(kknn)
-# library(stringr)
+library(dplyr)
+library(tidymodels)
+library(stacks)
+library(spatialsample)
+library(sf)
+library(brms)
+library(MASS)
+library(doParallel)
+library(xgboost)
+library(ranger)
+library(modeldata)
+library(kknn)
+library(stringr)
 
 ## If running through an error related to control_stack_grid(), install stacks package through this script \/
 # remotes::install_github("tidymodels/stacks")
-
-## Dataset 1 ---
-# geo_data <- read.csv("ml_dataset.csv")
-geo_data <- read.csv("ml_with_all_rasters.csv")
-geo_data <- geo_data %>% dplyr::select(-THCIC_ID)
-
-## Creating GeoFormula Function ---
-# create_geo_formula <- function(scaled_ppd = "scaled_ppd",
-#                                total_pop = "total_pop",
-#                                weighted_median_income = "weighted_median_income",
-#                                Accepts_Med = "Accepts_Med",
-#                                Per_MedMed = "Per_MedMed",
-#                                DFW_highways_merged_kde = "DFW_highways_merged_kde",
-#                                DFW_restaurant_merged_kde = "DFW_restaurant_merged_kde",
-#                                coords = c("lon", "lat")) {
-#   
-#   temp_formula <- "scaled_ppd ~ total_pop + weighted_median_income + Accepts_Med +"
-#   temp_formula <- str_c(temp_formula, paste(c(Per_MedMed, DFW_highways_merged_kde, DFW_restaurant_merged_kde, coords), collapse = " + "))
-#   
-#   return(as.formula(temp_formula))
-#   
-# }
 
 ## This model will set up a stacking model series for our GeoProject ---
 
@@ -194,22 +172,4 @@ evaluate_model <- function(model, df, frmla) {
     )
   )
 }
-
-## Applying the formula and stacked model ---
-
-set.seed(42) # Setting up data splits
-geo_data[is.na(geo_data)] <- 0
-geo_data_split <- initial_split(geo_data)
-geo_data_train <- training(geo_data_split)
-geo_data_test <- testing(geo_data_split)
-
-# geo_frmla <- create_geo_formula() # Formula
-geo_frmla <- as.formula("Log_Vol ~ Accepts_Med + total_pop_10km + median_income + shop_KDE_sigma1km + shop_KDE_sigma3km + shop_KDE_sigma5km + traffic_signals_KDE_sigma1km + traffic_signals_KDE_sigma3km + traffic_signals_KDE_sigma5km + highway_major_KDE_sigma1km + highway_major_KDE_sigma3km + highway_major_KDE_sigma5km + microsoft_housing_KDE_sigma1km + microsoft_housing_KDE_sigma3km + microsoft_housing_KDE_sigma5km + pharmacy_KDE_sigma1km + pharmacy_KDE_sigma3km + pharmacy_KDE_sigma5km + shop_KDE_sigma1km.1 + shop_KDE_sigma3km.1 + shop_KDE_sigma5km.1 + gold_buyer_KDE_sigma1km + gold_buyer_KDE_sigma3km + gold_buyer_KDE_sigma5km + restaurant_KDE_sigma1km + restaurant_KDE_sigma3km + restaurant_KDE_sigma5km + school_KDE_sigma1km + school_KDE_sigma3km + school_KDE_sigma5km + pawnbroker_KDE_sigma1km + pawnbroker_KDE_sigma3km + pawnbroker_KDE_sigma5km + supermarket_KDE_sigma1km + supermarket_KDE_sigma3km + supermarket_KDE_sigma5km + library_KDE_sigma1km + library_KDE_sigma3km + library_KDE_sigma5km")
-
-set.seed(42) # Stacked Model + Evaluation
-geo_stack <- model_stacking(geo_data_train, geo_frmla) # Feeding training set into the stacked model
-
-eval_results <- evaluate_model(geo_stack, geo_data_test, geo_frmla)
-eval_results$test_results
-head(eval_results$predictions)
 

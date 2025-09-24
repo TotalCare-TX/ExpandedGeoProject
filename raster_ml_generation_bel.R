@@ -53,7 +53,7 @@ generate_temporary_ml_start <- function() {
 
 ml_sf <- generate_temporary_ml_start() |>
     st_as_sf(coords = c("lon", "lat"), crs = 4326) |>
-    st_transform(3857)
+    st_transform(3083)
 
 # 3. The next step will be to pull raster information for each location. To do this,
 # we will first identify the raster storage location and its subordinate directories.
@@ -81,7 +81,7 @@ for (i in 1:length(raster_dirs)) {
         
         r <- terra::rast(temp_file_path)
         
-        if (st_crs(ml_sf)$wkt != crs(r)) {
+        if (st_crs(ml_sf)$wkt != st_crs(r)) {
             pts_for_extract <- st_transform(ml_sf, crs(r))
         } else {
             pts_for_extract <- ml_sf
@@ -100,11 +100,15 @@ for (i in 1:length(raster_dirs)) {
     
 }
 
-ml_table <- ml_sf %>%
+ml_table <- ml_sf |> #This will produce a geometry independent tibble
     st_drop_geometry(pts_sf) |>
     as_tibble() |>
     mutate(across(everything(), ~replace(., is.na(.) | is.nan(.), 0)))
 
+ml_sf <- ml_sf |> #This is our ml_sf with geometry intact
+    mutate(across(!geometry, ~replace(., is.na(.) | is.nan(.), 0))) |>
+    mutate(log1_scaled_ppd = log(scaled_ppd + 1)) |>
+    dplyr::select(-scaled_ppd)
 
 names(ml_table) <- sub(
   "^(.*?)_competitor_(.*)$", 
@@ -114,18 +118,14 @@ names(ml_table) <- sub(
 
 
 
+# 4. The next step is to input this data into the desired model. We can source a PCA/GAM model for a birdseye view of the data, then later stack on more complex models.
 
-# 4. The next step is to input this data into the desired model. For now, I will put 
-#in a placeholder function that serves as a basic model for our use.
-
-placeholder_model <- lm(scaled_ppd ~ ., data = ml_table)
-
-stepped_placeholder <- stats::step(placeholder_model)
+source("birdseye_model_bel.R")
 
 #Now we need to save this model. We will save the placeholder, but later we can 
 #change this to the actual real model.
 
-real_raster_model <- stepped_placeholder
+real_raster_model <- bird_mod
 saveRDS(real_raster_model, "raster_model.rds")
 
 # 5. Next, we will construct our frame for prediction. We will do this by turning 
@@ -146,7 +146,7 @@ for (i in 1:length(raster_dirs)) {
         
         r <- terra::rast(temp_file_path)
         
-        if (st_crs(ml_sf)$wkt != crs(r)) {
+        if (st_crs(ml_sf)$wkt != st_crs(r)) {
             pts_for_extract <- st_transform(ml_sf, crs(r))
         } else {
             pts_for_extract <- ml_sf
@@ -175,13 +175,17 @@ raster_prediction_tibble <- raster_prediction_tibble |>
     mutate(Accepts_Med = FALSE) |>
     mutate(across(everything(), ~replace(., is.na(.) | is.nan(.), 0)))
 
-# 6. Now that we have our complete raster for the state, we can PREDICT using our 
-#model and develop a table of predictions. If we convert this back to a raster, 
-#we can map it and then see our predictions - voila!
+raster_prediction_sf <- st_as_sf(raster_prediction_tibble, coords = c("x", "y"), crs = crs(ml_sf))
 
-predictions_df <- raster_prediction_tibble |>
-    select(c(x, y)) |>
-    mutate(Predicted = predict(real_raster_model, raster_prediction_tibble))
+# 6. Now that we have our complete raster for the state, we can PREDICT using our model and develop a table of predictions. If we convert this back to a raster, we can map it and then see our predictions - voila!
+
+
+predictions <- predict_birdseye(real_raster_model, raster_prediction_sf)
+
+predictions_df <- st_coordinates(raster_prediction_sf) |>
+    as_tibble() |>
+    mutate(Pred = predictions$baseline_mean)
+
 
 # Now we convert this back to a raster
 
@@ -196,11 +200,14 @@ r_template <- terra::rast("./kde_rasters/microsoft_housing/microsoft_housing_KDE
 r_out <- terra::rast(r_template)
 
 # Map df rows to template cell indices via x/y
-xy_mat <- as.matrix(predictions_df[, c("x","y")])
+xy_mat <- as.matrix(predictions_df[, c("X","Y")])
 cell_id <- terra::cellFromXY(r_out, xy_mat)
 
 # Assign values
-vals <- predictions_df$Predicted
+vals <- predictions_df$Pred
+
+#For interpretability, we need to limit these predictions (for now) to an upper limit
+vals <- pmin(vals, 40)
 
 # Initialize with 0s
 terra::values(r_out) <- 0

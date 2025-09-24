@@ -23,7 +23,14 @@ packages <- c(
     "terra",
     "shiny",
     "bslib",
-    "leafem"
+    "leafem",
+    "workflowsets",
+    "glmnet",
+    "ranger",
+    "xgboost",
+    "INLA",
+    "mgcv"
+    
 )
 
 # Install missing packages using renv
@@ -32,6 +39,14 @@ missing <- packages[!packages %in% installed.packages()[,"Package"]]
 if (length(missing) > 0) {
     message("Installing missing packages: ", paste(missing, collapse = ", "))
     renv::install(missing)
+    
+    install.packages(
+        "INLA",
+        repos = c(getOption("repos"),
+                  INLA = "https://inla.r-inla-download.org/R/stable"),
+        dep = TRUE
+    )
+    
 }
 
 # Load all packages
