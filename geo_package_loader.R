@@ -29,7 +29,8 @@ packages <- c(
     "ranger",
     "xgboost",
     "INLA",
-    "mgcv"
+    "mgcv",
+    "tidycensus"
     
 )
 
