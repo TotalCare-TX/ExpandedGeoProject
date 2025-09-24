@@ -1,32 +1,52 @@
-# This script will create a framework for generating our table for initial ML (raster-based). A raster-based ML will be HIGH-LEVEL only. This is because it is impossible to generate some of the specific, low-level data across the entire state.
+# This script will create a framework for generating our table for initial 
+# ML (raster-based). A raster-based ML will be HIGH-LEVEL only. This is because it is 
+# impossible to generate some of the specific, low-level data across the entire state.
 
-# We will compose the table in pieces. The first piece we will start with is the list of ERs and their associated outcome variables.
+# We will compose the table in pieces. The first piece we will start with is the list 
+# of ERs and their associated outcome variables.
 
-# In order to use files as our database gets updated, we will refer to filepaths for now. This will be easy becasue then we can replace the filepaths with database calls later as the databse updates.
+# In order to use files as our database gets updated, we will refer to filepaths for now. 
+# This will be easy becasue then we can replace the filepaths with database calls later 
+# as 
 
-# 1. Start with the list of ERs in the outcome table. The important columns to be present in this table are the THCIC_ID, the location coordinates, and the scaled patients per day. I do not have these at present and they are not in their raw form in the current directory so these will need to be inputted.
 
-# 2. The next step is to join this with a column that indicates if a facility accepts Medicare/Medicaid or not. This will function as a single column that is then joined on the THCIC_ID. If this is the last time we use the THCIC_ID, this column may also be removed.
+# 1. Start with the list of ERs in the outcome table. The important columns to be present 
+# in this table are the THCIC_ID, the location coordinates, and the scaled patients per 
+# day. I do not have these at present and they are not in their raw form in the current 
+# directory so these will need to be inputted.
 
-# For now, this joined table will be represented by the following using the ml_table.csv (delete this function when no longer in use):
+# 2. The next step is to join this with a column that indicates if a facility accepts 
+# Medicare/Medicaid or not. This will function as a single column that is then joined on 
+# the THCIC_ID. If this is the last time we use the THCIC_ID, this column may also be 
+# removed.
+
+# For now, this joined table will be represented by the following using the ml_table.csv 
+# (delete this function when no longer in use):
+
 generate_temporary_ml_start <- function() {
     
-    starting_table <- read_csv("./ml_creation_scripts/ml_data_temp_storage/ml_table.csv")
-    
-    fake_ers <- read_csv("./ml_creation_scripts/ml_data_temp_storage/Fake_ERs.csv") |>
-        rename(lon = Lon,
-               lat = Lat,
-               scaled_ppd = Daily_Insured_Volume) |>
-        dplyr::select(c(scaled_ppd, lon, lat)) |>
-        mutate(Accepts_Med = FALSE)
-    
-    out <- starting_table |>
-        dplyr::select(c(scaled_ppd, lon, lat, Accepts_Med)) |>
-        bind_rows(fake_ers) |>
-        na.omit()
-    
-    
-    
+  starting_table <- read_csv("./ml_creation_scripts/ml_data_temp_storage/ml_table.csv") |>
+    select(c(THCIC_ID, Accepts_Med, scaled_ppd, lon, lat)) 
+  
+  fake_ers <- read_csv("./ml_creation_scripts/ml_data_temp_storage/Fake_ERs.csv") |>
+    rename(lon = Lon,
+           lat = Lat,
+           scaled_ppd = Daily_Insured_Volume,
+           THCIC_ID =ID) |>
+    dplyr::mutate(Accepts_Med = FALSE) |>
+    select(c(THCIC_ID, Accepts_Med, scaled_ppd, lon, lat)) 
+  
+  
+  competitor_features <- readRDS("./ml_creation_scripts/ml_data_temp_storage/FEMC_competitor_plus_hospital_kde.rds") |>
+    rename(THCIC_ID = "thcic_id") |>
+    select(-c("lon", "lat"))
+  
+  out <- starting_table |>
+    select(c(THCIC_ID, scaled_ppd, lon, lat, Accepts_Med)) |>
+    mutate(THCIC_ID = as.character(THCIC_ID)) |>
+    bind_rows(fake_ers) |> left_join(competitor_features, by = "THCIC_ID") |>
+    na.omit() |> select(-c("THCIC_ID", "facility_type", "facility"))
+
     return(out)
     
 }
@@ -35,19 +55,25 @@ ml_sf <- generate_temporary_ml_start() |>
     st_as_sf(coords = c("lon", "lat"), crs = 4326) |>
     st_transform(3083)
 
-# 3. The next step will be to pull raster information for each location. To do this, we will first identify the raster storage location and its subordinate directories. Then we will read in each raster individually and write the full column before moving to the next raster.
+# 3. The next step will be to pull raster information for each location. To do this,
+# we will first identify the raster storage location and its subordinate directories.
+# Then we will read in each raster individually and write the full column before moving
+# to the next raster.
 
-raster_path <- "./kde_rasters/"
+# raster_path <- "./kde_rasters/"
+raster_path <- "kde_rasters/"
+
 
 raster_dirs <- list.dirs(raster_path)
 raster_dirs <- raster_dirs[raster_dirs != raster_path]
 
+
 for (i in 1:length(raster_dirs)) {
-    
+
     raster_files <- list.files(raster_dirs[i])
     
     for (j in 1:length(raster_files)) {
-        
+
         temp_col_name <- str_c("raster_", gsub(raster_dirs[i], "", raster_files[j]))
         temp_col_name <- gsub("\\.tif(f)?$", "", temp_col_name)
         
@@ -84,16 +110,26 @@ ml_sf <- ml_sf |> #This is our ml_sf with geometry intact
     mutate(log1_scaled_ppd = log(scaled_ppd + 1)) |>
     dplyr::select(-scaled_ppd)
 
+names(ml_table) <- sub(
+  "^(.*?)_competitor_(.*)$", 
+  "raster_competitor_\\1_KDE_sigma\\2", 
+  names(ml_table)
+)  
+
+
+
 # 4. The next step is to input this data into the desired model. We can source a PCA/GAM model for a birdseye view of the data, then later stack on more complex models.
 
 source("birdseye_model_bel.R")
 
-#Now we need to save this model. We will save the placeholder, but later we can change this to the actual real model.
+#Now we need to save this model. We will save the placeholder, but later we can 
+#change this to the actual real model.
 
 real_raster_model <- bird_mod
 saveRDS(real_raster_model, "raster_model.rds")
 
-# 5. Next, we will construct our frame for prediction. We will do this by turning all rasters into dataframes and joining them together.
+# 5. Next, we will construct our frame for prediction. We will do this by turning 
+#all rasters into dataframes and joining them together.
 
 raster_prediction_tibble <- tibble()
 
