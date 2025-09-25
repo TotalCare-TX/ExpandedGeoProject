@@ -1,4 +1,4 @@
-# Required libraries
+#find_address_coordinates.R
 library(httr)
 library(jsonlite)
 library(stringr)

@@ -1,16 +1,25 @@
-# ui.R
-
 library(shiny)
 library(bslib)
 library(leaflet)
+library(shinycssloaders)
+library(shinymanager)
 
-shinyUI(
+ui <- secure_app(
   fluidPage(
+    style = "margin:0; padding:0;",  # remove default margins to avoid scroll
     tags$head(
+      # ---- Focus username field after short delay for Enter key ----
+      tags$script(HTML("
+        $(document).ready(function() {
+          setTimeout(function() {
+            $('#shinymanager-user').focus();
+          }, 200); // 200 ms delay
+        });
+      ")),
+      # ---- Map styling ----
       tags$style(HTML("
-        #prediction_map {
-          height: 90vh !important;
-          width: 100% !important;
+        body {
+          overflow: hidden;  /* prevent scrolling */
         }
       "))
     ),
@@ -26,7 +35,10 @@ shinyUI(
                     tags$li("These coordinates will also be sent automatically to the Site Prediction tab.")
                   )
                 ),
-                leafletOutput("prediction_map"),
+                # ---- Map container filling remaining screen ----
+                shinycssloaders::withSpinner(
+                  leafletOutput("prediction_map", height = "calc(100vh - 180px)", width = "100%")
+                ),
                 textOutput("clicked_coords")
       ),
       
@@ -55,8 +67,9 @@ shinyUI(
                   textOutput("result"),
                   tableOutput("history_table")
                 )
-      )
-    ),
-    id = "tab"
-  )
+      ),
+      id = "tab"
+    )
+  ),
+  enable_enter = TRUE  # Enter key triggers login
 )
