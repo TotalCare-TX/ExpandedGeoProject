@@ -158,13 +158,13 @@ compute_competitor_metrics <- function(full_er_list, lon, lat) {
     #Define the point
     pt <- st_sfc(st_point(c(lon, lat)), crs = 4326)
     
-    all_ers_sf <- st_as_sf(full_er_list, coords = c("long", "lat"), crs = 4326)
+    all_ers_sf <- st_as_sf(full_er_list, coords = c("lon", "lat"), crs = 4326)
     distances <- st_distance(pt, all_ers_sf)
     competitors_within_10km <- sum(as.numeric(distances) < 10000)
     distances <- distances[as.numeric(distances) != 0]
     nearest_er_km <- as.numeric(min(distances)) / 1000
     
-    femc_ers_sf <- st_as_sf(filter(full_er_list, `Facility Type` == 'FEMC'), coords = c("long", "lat"), crs = 4326)
+    femc_ers_sf <- st_as_sf(filter(full_er_list, `Facility Type` == 'FEMC'), coords = c("lon", "lat"), crs = 4326)
     distances <- st_distance(pt, femc_ers_sf)
     femc_within_50km <- sum(as.numeric(distances) < 50000)
     distances <- distances[as.numeric(distances) != 0]
