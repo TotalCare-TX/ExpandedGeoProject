@@ -125,7 +125,7 @@ generate_full_ml_sf <- function(lat, lon) {
                avg_road_size_5km = output_road_vars$avg_road_size_5km,
                total_corner_score = output_road_vars$total_corner_score)
     
-    output_competitor <- compute_competitor_metrics("full_er_list.rds", lat = lat, lon = lon)
+    output_competitor <- compute_competitor_metrics("competitor_er_list.rds", lat = lat, lon = lon)
     #We may change the location of the full competitor list if we can get a reliable network location
     
     output_sf <- output_sf |>
