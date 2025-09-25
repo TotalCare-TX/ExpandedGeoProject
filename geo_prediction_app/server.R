@@ -2,11 +2,11 @@ library(shiny)
 library(raster)
 library(terra)
 library(leaflet)
-library(leafem)
 library(httr)
 library(jsonlite)
 library(stringr)
 library(randomForest)
+library(shinymanager)
 
 # ---- Load external geocode function ----
 source("find_address_coordinates.R")
@@ -18,12 +18,20 @@ if (file.exists("model.rds")) {
   stop("⚠️ model.rds not found. Please run build_model.R first.")
 }
 
-# ---- Shiny Server ----
 shinyServer(function(input, output, session) {
+  
+  # ---- Authentication ----
+  res_auth <- secure_server(
+    check_credentials = check_credentials(credentials)
+  )
+  
+  observe({
+    cat("User logged in:", res_auth$user, "\n")
+  })
   
   # ---- TAB 1: Map Prediction ----
   output$prediction_map <- renderLeaflet({
-    r <- terra::rast("prediction_map.tif")
+    r <- terra::rast("raster_predictions.tif")
     
     if (tryCatch(terra::crs(r, proj = TRUE) != "EPSG:4326", error = function(e) TRUE)) {
       r <- terra::project(r, "EPSG:4326")
@@ -33,15 +41,14 @@ shinyServer(function(input, output, session) {
     vals <- raster::values(rr)
     pal <- colorNumeric("viridis", domain = range(vals, na.rm = TRUE), na.color = NA)
     
-    leaflet() |>
-      addProviderTiles("CartoDB.Positron") |>
-      addRasterImage(rr, colors = pal, opacity = 0.8, project = FALSE) |>
-      addLegend("bottomright", pal = pal, values = vals, title = "Value") |>
-      fitBounds(xmin(rr), ymin(rr), xmax(rr), ymax(rr)) |>
-      addMouseCoordinates()
+    leaflet() %>%
+      addProviderTiles("CartoDB.Positron") %>%
+      addRasterImage(rr, colors = pal, opacity = 0.8, project = FALSE) %>%
+      addLegend("bottomright", pal = pal, values = vals, title = "Value") %>%
+      fitBounds(xmin(rr), ymin(rr), xmax(rr), ymax(rr))
   })
   
-  # Capture map clicks
+  # ---- Capture map clicks ----
   observeEvent(input$prediction_map_click, {
     lat <- input$prediction_map_click$lat
     lng <- input$prediction_map_click$lng
@@ -72,11 +79,9 @@ shinyServer(function(input, output, session) {
   # ---- Prediction ----
   observeEvent(input$predict_button, {
     
-    # Convert inputs to numeric
     lat <- suppressWarnings(as.numeric(input$x1))
     lon <- suppressWarnings(as.numeric(input$x2))
     
-    # ✅ Manual validation
     if (is.na(lat) || is.na(lon)) {
       showNotification("Please enter valid latitude and longitude!", type = "error")
       return(NULL)
@@ -89,7 +94,6 @@ shinyServer(function(input, output, session) {
     
     confidence <- round(100 * max(pred_probs), 1)
     
-    # Save history
     old <- history()
     history(rbind(old, data.frame(lat = lat, lon = lon,
                                   prediction = as.character(pred_class),
